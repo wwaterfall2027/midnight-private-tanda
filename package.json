@@ -1,0 +1,16 @@
+{
+  "name": "midnight-private-tanda",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A rotating savings circle on Midnight where everyone can verify the pot is complete but nobody can see who paid.",
+  "scripts": {
+    "compile": "compact compile contract/tanda.compact contract/managed/tanda",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@midnight-ntwrk/compact-runtime": "0.21.0",
+    "vitest": "3.2.4"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,41 @@
+name: Compile and test
+
+on:
+  push:
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install the Compact toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -LsSf https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Pin the compiler to the ledger 9 version (0.36.0)
+        run: |
+          compact update 0.36.0
+          compact compile --version
+
+      - name: Compile the contract (circuits, keys and JS bindings)
+        run: compact compile contract/tanda.compact contract/managed/tanda
+
+      - name: Install test dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Run the tests
+        run: npm test
+
+      - name: Keep the compiled output
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiled-contract
+          path: contract/managed/tanda

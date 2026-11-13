@@ -1,0 +1,98 @@
+pragma language_version 0.28;
+
+import CompactStandardLibrary;
+
+// Private Tanda: a rotating savings circle (tanda, susu, ROSCA) where the group can
+// verify that the pot is complete, but nobody can see WHO has paid.
+//
+// Public (everyone can read):            Private (stays on each member's device):
+//   - number of members, amount            - each member's secret key
+//   - payout order, as anonymous keys      - which member made which payment
+//   - how many members paid this round     - the Merkle path proving membership
+//   - one unlinkable nullifier per payment
+//
+// Paying proves "I am one of the enrolled members" with a Merkle-tree membership proof,
+// which does not reveal which member. A per-round nullifier stops double payment without
+// linking payments to members, or one member's payments across rounds.
+
+// --- Public rules, fixed at deployment ---
+export sealed ledger memberCount: Uint<64>;
+export sealed ledger contribution: Uint<64>;
+export sealed ledger organizer: Bytes<32>;
+
+// --- Membership ---
+export ledger members: MerkleTree<4, Bytes<32>>;      // anonymous set: proves membership without saying who
+export ledger payoutOrder: Map<Uint<64>, Bytes<32>>;  // round -> anonymous key of the member paid that round
+export ledger memberKeys: Set<Bytes<32>>;             // rejects enrolling the same key twice
+export ledger enrolled: Counter;
+
+// --- Rounds ---
+export ledger round: Counter;            // current round, starting at 0
+export ledger roundTag: Bytes<32>;       // changes every round, so nullifiers can't be linked across rounds
+export ledger paidThisRound: Counter;    // how many members paid in the current round
+export ledger nullifiers: Set<Bytes<32>>;
+
+witness secretKey(): Bytes<32>;
+witness memberPath(leaf: Bytes<32>): MerkleTreePath<4, Bytes<32>>;
+
+constructor(size: Uint<64>, amount: Uint<64>, seed: Bytes<32>) {
+  assert(size >= 2, "A tanda needs at least 2 members");
+  assert(size <= 16, "A tanda can have at most 16 members");
+  assert(amount > 0, "The contribution must be positive");
+  memberCount = disclose(size);
+  contribution = disclose(amount);
+  organizer = disclose(organizerKey(secretKey()));
+  roundTag = disclose(seed);
+}
+
+circuit organizerKey(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "tanda:organizer"), sk]);
+}
+
+// A member's anonymous key. Members compute it on their own device and hand it to the
+// organizer; it never reveals the secret key.
+export pure circuit memberKey(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "tanda:member"), sk]);
+}
+
+// The organizer enrolls members in payout order. Position k collects in round k.
+export circuit enroll(member: Bytes<32>): [] {
+  assert(organizer == organizerKey(secretKey()), "Only the organizer can enroll members");
+  assert(enrolled.read() < memberCount, "The tanda is already full");
+  const key = disclose(member);
+  assert(!memberKeys.member(key), "This member is already enrolled");
+  memberKeys.insert(key);
+  payoutOrder.insert(enrolled.read(), key);
+  members.insert(key);
+  enrolled.increment(1);
+}
+
+// A member pays into the current round. The proof shows the payer is enrolled
+// without revealing which member it is.
+export circuit contribute(): [] {
+  assert(enrolled.read() == memberCount, "The tanda is not full yet");
+  assert(round.read() < memberCount, "The tanda has finished");
+
+  const sk = secretKey();
+  const leaf = memberKey(sk);
+  const path = memberPath(leaf);
+  assert(path.leaf == leaf, "The membership path is not for this member");
+  assert(members.checkRoot(disclose(merkleTreePathRoot<4, Bytes<32>>(path))), "Not a member of this tanda");
+
+  // One nullifier per member per round. It depends on the secret key and the round tag,
+  // so it can't be linked to the member's public key or to their other payments.
+  const nullifier = disclose(persistentHash<Vector<3, Bytes<32>>>([pad(32, "tanda:nullifier"), roundTag, sk]));
+  assert(!nullifiers.member(nullifier), "You already paid this round");
+  nullifiers.insert(nullifier);
+  paidThisRound.increment(1);
+}
+
+// The member whose turn it is collects the full pot, which starts the next round.
+export circuit collect(): [] {
+  assert(round.read() < memberCount, "The tanda has finished");
+  assert(paidThisRound.read() == memberCount, "The pot is not complete yet");
+  assert(payoutOrder.lookup(round.read()) == memberKey(secretKey()), "It is not your turn");
+  round.increment(1);
+  paidThisRound.resetToDefault();
+  roundTag = persistentHash<Vector<2, Bytes<32>>>([pad(32, "tanda:next-round"), roundTag]);
+}
