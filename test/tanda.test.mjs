@@ -98,6 +98,10 @@ describe('Private Tanda', () => {
     for (const sk of [ANA, BETO, CARLA]) expect(hex(nullifier)).not.toBe(hex(pureCircuits.memberKey(sk)));
     // Nothing that identifies Beto appears in the public transcript of the call.
     const transcript = JSON.stringify(paid.callProofDataTrace.at(-1).publicTranscript, (k, v) => (v instanceof Uint8Array ? hex(v) : typeof v === 'bigint' ? v.toString() : v));
+    // Positive control: the transcript does carry the public values (the nullifier), so the
+    // checks below are meaningful and not passing on an empty or differently-encoded transcript.
+    expect(transcript.length).toBeGreaterThan(100);
+    expect(transcript.includes(hex(nullifier)) || JSON.stringify([...paid.callProofDataTrace.at(-1).publicTranscript].map(String)).includes(String(nullifier))).toBe(true);
     expect(transcript).not.toContain(hex(pureCircuits.memberKey(BETO)));
     expect(transcript).not.toContain(hex(BETO));
   });
